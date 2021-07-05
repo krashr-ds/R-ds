@@ -1,0 +1,336 @@
+---
+title: 'Homework 3 HDS 823, Multiple Correspondence Analysis - Titanic.'
+subtitle: 'This analysis performed in R, using the FactoMineR library.'
+author: "Kyle P. Rasku RN BSN"
+output:
+  word_document: default
+  html_notebook: default
+  html_document:
+    df_print: paged
+---
+<p>
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+</p>
+<p>
+In RStudio, you can execute each chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+</p>
+```{r}
+plot(Titanic)
+```
+
+Titanic Data Set - Modified for MCA by Nick Buonomia<br/>
+Perform Multiple Correspondence Analysis of Class, Age & Sex with Supplemental Variable: Survived<br/>
+<br/>
+
+```{r}
+library("FactoMineR")
+library("factoextra")
+titanic <- read.csv("titanic_MCA.csv")
+titanic.active <- titanic[1:2200, 2:5]
+head(titanic.active[, 1:4], 10)
+```
+
+Active Rows for MCA are set. <br/>
+Provide data summary of active rows: <br/>
+<br/>
+```{r}
+summary(titanic.active)[, 1:4]
+```
+
+This data set has 2,200 rows and all variables are categorical.<br/>
+Plot frequencies:<br/>
+<br/>
+
+```{r}
+library(ggplot2)
+ggplot(titanic.active, aes(x = Class)) + geom_bar() + labs(title = "Class of Titanic Passengers")
+ggplot(titanic.active, aes(x = Age)) + geom_bar() + labs(title = "Age Group of Titanic Passengers")
+ggplot(titanic.active, aes(x = Sex)) + geom_bar() + labs(title = "Sex of Titanic Passengers")
+ggplot(titanic.active, aes(x = Survived)) + geom_bar() + labs(title = "Survival Status of Titanic Passengers")
+```
+
+Looking more closely at Children:<br/>
+
+```{r}
+children <- subset(titanic, Age=="child")
+nrow(children)
+```
+
+There are 109 children out of 2200 people, or 5% of all the passengers.<br/>
+How many Children Survived by Class?<br/>
+<br/>
+
+```{r}
+ggplot(data = children, aes(x = Survived, fill = Class)) +
+    geom_bar() + labs(title = "Titanic: Children's Survival Status by Class")
+```
+
+```{r}
+library(sqldf)
+num_died <- sqldf('SELECT count(*) from children where Survived="no"')
+num_third_survived <- sqldf('SELECT count(*) from children where Survived="yes" and Class="third"')
+num_second_survived <- sqldf('SELECT count(*) from children where Survived="yes" and Class="second"')
+num_first_survived <- sqldf('SELECT count(*) from children where Survived="yes" and Class="first"')
+num_third_children = num_died + num_third_survived
+```
+Number of First Class Children on Board: 6, Survived: 6<br/>
+Number of Second Class Children on Board: 24, Survived: 24<br/>
+Number of Third Class Children on Board: 79, Survived: 27 (34.18%)<br/>
+<p/>
+<p>
+While there were fewer children on board with parents holding First and Second Class tickets, and many more with parents holding Third Class tickets, 
+100% of the children with parents holding First and Second class tickets survived the sinking, while only about 34% of the children with parents 
+holding Third Class tickets survived the sinking.</p>
+
+```{r}
+# Perform MCA, only active variables: Class, Sex and Age
+# The SUPPLEMENTAL variable is "Survived"
+# Use the "Burt" method for calculation (per Nick)
+res.mca <- MCA(titanic.active, quali.sup=4, method="burt", graph = FALSE)
+res.mca
+```
+Intermediate Results:<br/>
+
+```{r}
+# Commented out - this does include the Burt Tables, but it is about 100 pages long.
+#res.mca$call
+```
+
+The proportions of variance retained by the different dimensions, extracted to Eigenvalues:<br/>
+<br/>
+```{r}
+eig.val <- get_eigenvalue(res.mca)
+fviz_screeplot(res.mca, addlabels = TRUE, ylim = c(0, 99))
+```
+<p>
+Using the Burt method, 39.5% of the variance is explained by the 1st Dimension, and 23.9% is explained by the 2nd.<br/>
+An additional 18.3% is explained by a 3rd. <br/>
+This improves variance account in Eigenvectors 1 and 2 by about 10%. <br/>
+100% of the variance is explained by 5 Dimensions.  <br/>
+Therefore, if we could plot the data in 3 Dimensions, we'd be able to see about 82% of the variance.<br/>
+Unfortunately, with MCA two dimensions must be visualized at a time.<br/>
+A visualization of Dimensions 1 and 2 or 1 and 3 will cover about 64% of the variance. A visualization of 2 and 3 would cover 42%.<br/>
+</p>
+
+```{r}
+# This should be quite messy, with 2200 individuals...
+# There were so many overlapping data points that the library chose not to show them
+fviz_mca_biplot(res.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+```
+<p>
+It looks like Dim 1 is quite like a survival continuum with children and women on the right, 
+and males and crew members on the left.  It takes a minute to see what Dim 2 is about, but 
+it looks like Age - with children at the top and older people at the bottom.
+</p>
+
+```{r}
+# Now let's look at Dimensions 1 and 3
+fviz_mca_biplot(res.mca, 
+                axes = c(1,3),
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+```
+
+<p>Hmm...ok.  So Here we have the crew and children at polar opposite extremes.  And on Dim3, first and 
+third class are at the bottom of Dim3 while second class if very far away near the top.</p>
+
+
+```{r}
+adults <- subset(titanic, Age=="adult")
+ggplot(data = adults, aes(x = Survived, fill = Class)) +
+    geom_bar() + labs(title = "Titanic: Adults' Survival Status by Class")
+```
+
+```{r}
+ggplot(data = adults, aes(x = Survived, fill = Sex)) +
+    geom_bar() + labs(title = "Titanic: Adults' Survival Status by Sex")
+```
+
+```{r}
+num_adults_died <- sqldf('SELECT count(*) from adults where Survived="no"')
+num_adults_lived <- sqldf('SELECT count(*) from adults where Survived="yes"')
+num_tadults_survived <- sqldf('SELECT count(*) from adults where Survived="yes" and Class="third"')
+num_tadults_died <- sqldf('SELECT count(*) from adults where Survived="no" and Class="third"')
+num_sadults_survived <- sqldf('SELECT count(*) from adults where Survived="yes" and Class="second"')
+num_sadults_died <- sqldf('SELECT count(*) from adults where Survived="no" and Class="second"')
+num_fadults_survived <- sqldf('SELECT count(*) from adults where Survived="yes" and Class="first"')
+num_fadults_died <- sqldf('SELECT count(*) from adults where Survived="no" and Class="first"')
+num_tadults = num_tadults_survived + num_tadults_died
+num_sadults = num_sadults_survived + num_sadults_died
+num_fadults = num_fadults_survived + num_fadults_died
+```
+<p><b>There were 2092 adults on board Titanic.</b><br/>
+1438 adults died (68.74%), 654 (31.26%) survived.<br/>
+There were 319 adults in first class. 197 of them (62%) survived.<br/>
+There were 261 adults in second class. 94 of them (36%) survived.<br/>
+There were 627 adults in third class. 151 of them (24%) survived.<br/>
+</p>
+
+```{r}
+num_ffemales <- sqldf('SELECT count(*) from adults where Sex="female" and Class="first"')
+num_ffemales_survived <- sqldf('SELECT count(*) from adults where Sex="female" and Class="first" and Survived="yes"')
+num_sfemales <- sqldf('SELECT count(*) from adults where Sex="female" and Class="second"')
+num_sfemales_survived <- sqldf('SELECT count(*) from adults where Sex="female" and Class="second" and Survived="yes"')
+num_tfemales <- sqldf('SELECT count(*) from adults where Sex="female" and Class="third"')
+num_tfemales_survived <- sqldf('SELECT count(*) from adults where Sex="female" and Class="third" and Survived="yes"')
+num_cfemales <- sqldf('SELECT count(*) from adults where Sex="female" and Class="crew"')
+num_cfemales_survived <- sqldf('SELECT count(*) from adults where Sex="female" and Class="crew" and Survived="yes"')
+```
+<p>
+<b>There were 144 women traveling first class, and 140 of them survived the sinking (97%).</b><br/>
+As we know from before, 100% of the first class children survived (but there were only 6, according to this data set).<br/>
+There were 93 women traveling second class, and 80 of them survived (86%).<br/>
+Again, all the second class children survived.<br/>
+There were 165 women traveling third class, and 76 of them survived (46%). And 34% of their children (calculated earlier).<br/>
+While the crew fared poorly in general in terms of survival, there were only 23 women on the crew, and 20 of them survived (87%).<br/>
+</p>
+
+```{r}
+# Looking at the coordinates, cos2 and contribution of variable categories
+var <- get_mca_var(res.mca)
+var
+```
+
+<p>The correlation between variables and principal dimensions:</p>
+
+```{r}
+fviz_mca_var(res.mca, choice = "mca.cor", 
+            repel = TRUE, # Avoid text overlapping (slow)
+            ggtheme = theme_minimal())
+```
+<p>
+Class contributes strongly to both Dim 1 and 2.  Sex contributes strongly to Dim 1 but NOT Dim 2.
+Age is a moderate contributor to both Dim 1 and Dim 2 and Survived is more of a contributor to Dim 1 than 2.
+</p>
+```{r}
+# Category / Value Coordinates
+round(var$coord, 2)
+```
+ <p>
+ Ok, based on this, it looks like Dim 1 is about first and third class, children and women.<br/>
+ Dim 2 is about third class and children. Dim 3 is about second class. <br/>
+ Dim 4 is another share of first class and children, but also crew.<br/>
+ And Dim 5 is predominantly crew.<br/>
+ If wanting to know how a particular class fared in terms of survival, this would be important to note. <br/>
+ You may not be able to look at Dim 1 and 2 and draw conclusions about the second class passengers for example.<br/>
+ </p>
+```{r}
+# Visualizing Category / Value Coordinates
+fviz_mca_var(res.mca, 
+             repel = TRUE, # Avoid text overlapping (slow)
+             ggtheme = theme_minimal())
+```
+ <p>
+Variable categories with a similar profile are grouped together. (Example: Male and Adult)<br/>
+Negatively correlated variable categories are positioned on opposite sides of the plot origin (opposed quadrants). (Crew vs. Child)<br/>
+The distance between category points and the origin measures the **quality** of the variable category on the factor map. <br/>
+Category points that are away from the origin are *well represented* on the factor map.<br/>
+Adults are undifferentiated.  Non-survival, adults and second class are less well represented here.  Children, first class and females better represented.<br/>
+</p>
+<br/>
+Degrees of association between variable categories and axes:<br/>
+<br/>
+```{r}
+head(var$cos2, 10)
+```
+<p>
+Dim 1 is representing the crew, a small equalish amt of all 3 classes, about equal amounts of adults & children, males & females.<br/>
+Dim 2 is representing first class, and a good chunk of third class.  Also some more adults and children.<br/>
+Dim 3 is a hodgepodge with lion's share of second class, but there's not much there (large negative exp values).<br/>
+Dim 4 is a bit more of third class, more of the variance of adults & children.<br/>
+Dim 5 is the rest of the crew and males & females.<br/>
+</p>
+```{r}
+# Color by cos2 values: quality on the factor map
+fviz_mca_var(res.mca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE, # Avoid text overlapping
+             ggtheme = theme_minimal())
+```
+The lower quality of the Second class and - to a smaller extent - Third class data points is reiterated above.<br/>
+<br/>
+```{r}
+library("corrplot")
+corrplot(var$cos2, is.corr=FALSE)
+```
+Another view of this with corrplot library.<br/>
+If we want to get a good look at survival vv. Second class, we may need to look beyond Dims 1 & 2.<br/>
+<br/>
+```{r}
+# Cos2 of variable categories on Dim.1 and Dim.2
+fviz_cos2(res.mca, choice = "var", axes = 1:2)
+```
+
+```{r}
+# Contributions of Variable Categories to the Dimensions
+head(round(var$contrib,2), 10)
+```
+The variables that contribute MOST to Dims 1 and 2 explain most of the variation in the data set (53%) - crew, child, female, first & third.<br/>
+<br/>
+```{r}
+# Contributions of rows to dimension 1
+fviz_contrib(res.mca, choice = "var", axes = 1, top = 15)
+# Contributions of rows to dimension 2
+fviz_contrib(res.mca, choice = "var", axes = 2, top = 15)
+# Contributions of rows to dimension 3
+fviz_contrib(res.mca, choice = "var", axes = 3, top = 15)
+# Contributions of rows to dimension 4
+fviz_contrib(res.mca, choice = "var", axes = 4, top = 15)
+```
+The red dashed line on the graphs above indicates the *expected average value*, if the contributions were uniform.<br/>
+<br/>
+```{r}
+fviz_mca_var(res.mca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE, # avoid text overlapping (slow)
+             ggtheme = theme_minimal()
+             )
+```
+
+Graphing Individuals<br/>
+<br/>
+```{r}
+ind <- get_mca_ind(res.mca)
+ind
+```
+Quality and Contribution of Individuals<br/>
+<br/>
+```{r}
+fviz_mca_ind(res.mca, col.ind = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE, # Avoid text overlapping (slow if many points)
+             ggtheme = theme_minimal())
+```
+
+```{r}
+# Apply SURVIVED as Grouping Variable
+fviz_mca_ind(res.mca, 
+             label = "none", # hide individual labels
+             habillage = "Survived", # color by groups 
+             palette = c("#00AFBB", "#E7B800"),
+             addEllipses = TRUE, ellipse.type = "confidence",
+             ggtheme = theme_minimal()) 
+```
+
+
+```{r}
+fviz_ellipses(res.mca, c("Survived", "Class"),
+              geom = "point")
+```
+```{r}
+fviz_ellipses(res.mca, c("Survived", "Age"),
+              geom = "point")
+```
+
+```{r}
+# top 500 contributing individuals and top 5 variable categories
+fviz_mca_biplot(res.mca, select.ind = list(contrib = 500), 
+               select.var = list(contrib = 5),
+               ggtheme = theme_minimal())
+```
+<p><b>
+All in all, the MCA concludes clearly that Men, Crew members and Adults in general were less likely to survive,
+while Females, Children and First class passengers were much more likely.  
+</b></p>
