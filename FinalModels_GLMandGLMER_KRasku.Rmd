@@ -1,0 +1,405 @@
+---
+title: 'R Notebook: GLM and GLMM - Generalized Linear Models & Generalized Linear
+  Mixed Models'
+author: "Kyle P. Rasku RN BSN"
+date: "07-15-2021"
+output:
+  html_document:
+    df_print: paged
+subtitle: Using Poisson, Negative Binomial and Linear Regression to Predict the Number
+  of Visits and Lengths of Stay
+---
+
+```{r}
+library(tidyverse)
+library(broom)
+library(broom.mixed)
+library(stats)
+library(lme4)
+library(lmerTest)
+
+PUF_ELIX_IP2009 <- read.csv("PUF_ELIX_IP2009.csv")
+
+PUF_ELIX_IP2009 <- within(PUF_ELIX_IP2009, {
+  STATE <- factor(STATE)
+  COUNTY <- factor(COUNTY)
+  FULL_FIPS_CODE <- factor(FULL_FIPS_CODE)
+  CBSA <- factor(CBSA)
+})
+
+PUF_ELIX_IP2009 <- PUF_ELIX_IP2009 %>%
+  mutate(VISITS = TOTAL_VISITS>0)
+
+```
+
+Beginning Covariates:<br/>
+BENE_AGE The beneficiary's approximate age, calculated from the last day of the year 2009<br/>
+B_SEX The beneficiary's sex - 0 for males, 1 for females<br/>
+B_DIED Whether or not this beneficiary died in 2009 (0 for No, 1 for Yes)<br/>
+B_DIVERSE If the person is of color (1) or white (0)<br/>
+HF_PROP_RANK The proportional rank of the person's county against all the counties in their state on Health Factors (RWJF, 2010)<br/>
+HO_PROP_RANK The proportional rank of the person's county against all the counties in their state on Health Outcomes (RWJF, 2010)<br/>
+TOTCHRONIC The max number of chronic conditions the beneficiary had in 2009<br/>
+MEAN_ELIX_SCORE The mean Elixhauser score based on the person's admissions in 2009 (Might be artificially 0 if a person with chronic conditions had no admissions in 2009.)<br/>
+</p>
+
+```{r}
+m1 <- glm(VISITS ~ BENE_AGE + B_SEX + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE, data=PUF_ELIX_IP2009, family=binomial(link="logit"))
+summary(m1)
+
+```
+<p>
+In this model, <br/>
+Age, Total # of Chronic Conditions and Mean Elixhauser Score are significant at the 99% CI against the outcome of having any inpatient "VISITS".<br/>
+As age goes up, the likelihood of any visit goes down.  At some point, people die.<br/>
+As the # of chronic conditions & mean Elixhauser scores increase the likelihood of any inpatient visits increase.<br/>
+</p>
+<p>
+Whether or not the person Died in 2009 is significant at the 95% CI.<br/>
+People often die in the hospital, so dying and inpatient visits are significantly related.<br/>
+</p>
+<p>
+Not being white (B_DIVERSE) is significant at the 90% CI.<br/>
+The estimate is negative, so there is a negative relationship between being not white and having visits.<br/>
+Inverse relationships in correlation matrices show that there is a negative relationship between being a person of color and living longer, also system utilization / going to the doctor regularly.<br/>
+<p>
+
+
+<p>
+Now that we've looked at the outcome of any "VISITS", we can look at the outcome of TOTAL_VISITS>0
+</p>
+```{r}
+PUF_ELIX_IP2009_GT0 <- subset(PUF_ELIX_IP2009, TOTAL_VISITS>0)
+```
+<p>
+The original data set had 113,305 observations, and this subset has 16,908.<br/>
+First, let's try OLS against the outcome of TOTAL_VISITS > 0.  Then, <br/>
+We will try a Poisson model with log link for the observations.<br/>
+</p>
+```{r}
+
+# Could be worse ... but standardized residual plots look pretty wonky!!
+m0 <- lm(TOTAL_VISITS ~ BENE_AGE + B_SEX + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE, data=PUF_ELIX_IP2009_GT0)
+summary(m0)
+```
+```{r}
+plot(m0)
+```
+<p>
+The OLS / Gaussian model is a poor fit.<br/>
+</p>
+
+```{r}
+m2 <- glm(TOTAL_VISITS ~ BENE_AGE + B_SEX + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE, data=PUF_ELIX_IP2009_GT0, family=poisson(link = "log"))
+summary(m2)
+```
+
+<p>
+Age is no longer significant in this model.<br/>
+Death, Chronic Conditions and Elixhauser Score remain significant.<br/>
+<br/>
+Let's compare this Poisson model to a Negative Binomial model.<br/>
+</p>
+
+```{r}
+library(MASS)
+m3 <- glm.nb(TOTAL_VISITS ~ BENE_AGE + B_SEX + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE, data=PUF_ELIX_IP2009_GT0)
+summary(m3)
+
+```
+
+<p>
+And finally, let's fit the original data to a Zero-Inflated Negative Binomial model
+</p>
+
+```{r}
+library(pscl)
+m4 <- zeroinfl(TOTAL_VISITS ~ BENE_AGE + B_SEX + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE, 
+               data = PUF_ELIX_IP2009, dist = "negbin")
+summary(m4)
+```
+<p>
+As you can see, we could have jumped straight to the Zero-Inflated model, as it contains the hurdle model!<br/>
+<br/>
+Let's look at some of the plots. <br/>
+<br/>
+</p>
+```{r}
+# Diagnostic and Residuals plot for m2: Poisson regression (over dispersion is evident)
+plot(m2)
+```
+
+```{r}
+# Diagnostic and Residuals plot for m3: Negative Binomial regression (still over dispersed)
+plot(m3)
+```
+
+```{r}
+
+# Negative Binomial
+ggplot(data = PUF_ELIX_IP2009_GT0, aes(x = TOTCHRONIC, y = TOTAL_VISITS)) +
+  geom_jitter(height=0.05, width = 0.1) + 
+  stat_smooth(method = "glm.nb")
+```
+
+```{r}
+
+# Poisson
+ggplot(data = PUF_ELIX_IP2009_GT0, aes(x = TOTCHRONIC, y = TOTAL_VISITS)) +
+  geom_jitter(height=0.05, width = 0.1) + 
+  stat_smooth(method = "glm", method.args = c(family="poisson"))
+```
+<p>
+They're basically identical.<br/>
+<p/>
+
+```{r}
+
+# Negative Binomial
+ggplot(data = PUF_ELIX_IP2009_GT0, aes(x = MEAN_ELIX_SCORE, y = TOTAL_VISITS)) +
+  geom_jitter(height=0.05, width = 0.1) + 
+  stat_smooth(method = "glm.nb")
+```
+
+```{r}
+
+# Poisson
+ggplot(data = PUF_ELIX_IP2009_GT0, aes(x = MEAN_ELIX_SCORE, y = TOTAL_VISITS)) +
+  geom_jitter(height=0.05, width = 0.1) + 
+  stat_smooth(method = "glm", method.args = c(family="poisson"))
+```
+<p>
+These are very similar.<br/>
+Based on the dispersion handling, the zero-inflated model was the most accurate thus far,<br/>
+but let's look at some different covariates, using the Poisson model.<br/>
+What else could be related to the total # of inpatient visits?<br/>
+</p>
+
+```{r}
+# Can't use TOTAL_PHYS or TOTAL_CODES due to their near-perfect correlation with the outcome variable (see python corr matrix)
+m2b <- glm(TOTAL_VISITS ~ BENE_AGE + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE + CVRG_MOS + RX_CVRG_MOS + TOTAL_LOS, data=PUF_ELIX_IP2009_GT0, family=poisson(link = "log"))
+summary(m2b)
+```
+
+<p>
+Now, let's see what impact State and County or CBSA would have.<br/>
+</p>
+```{r}
+m2c <- glm(TOTAL_VISITS ~ BENE_AGE + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE + TOTAL_LOS + STATE, data=PUF_ELIX_IP2009_GT0, family=poisson(link = "log"))
+summary(m2c)
+```
+
+<p>
+No significant states.  Let's try CBSAs.<br/>
+</p>
+
+```{r}
+m2e <- glm(TOTAL_VISITS ~ BENE_AGE + B_DIVERSE + B_DIED + HF_PROP_RANK + HO_PROP_RANK + TOTCHRONIC + MEAN_ELIX_SCORE + RX_CVRG_MOS + TOTAL_LOS + CBSA, data=PUF_ELIX_IP2009_GT0, family=Gamma(link = "log"))
+summary(m2e)
+```
+
+<p>
+CBSA's significant for the outcome of TOTAL_VISITS>0 include:<br/>
+<table>
+<tr><td>99% CI</td><td align="right">12420</td><td>Austin-Round Rock, TX</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">16700</td><td>Charleston-North Charleston, SC</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">17860</td><td>Columbia, MO</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">23580</td><td>Gainesville, GA</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">25060</td><td>Gulfport-Biloxi-Pascagoula, MS</td><td>NEGATIVE</td></tr>
+<tr><td>95% CI</td><td align="right">10180</td><td>Abilene, TX</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">19180</td><td>Danville, IL</td><td>NEGATIVE</td></tr>
+<tr><td colspan="2" align="right">19340</td><td>Davenport-Moline-Rock Island, IA-IL</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">20940</td><td>El Centro, CA</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">25180</td><td>Hagerstown-Martinsburg, MD-WV</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">26980</td><td>Iowa City, IA</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">29340</td><td>Lake Charles, LA</td><td>POSITIVE</td></tr>
+<tr><td>90% CI</td><td align="right">15380</td><td>Buffalo-Cheektowaga-Niagara Falls, NY</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">16180</td><td>Carson City, NV</td><td>POSITIVE</td></tr>
+<tr><td colspan="2" align="right">21660</td><td>Eugene, OR</td><td>NEGATIVE</td></tr>
+<tr><td colspan="2" align="right">28740</td><td>Kingston, NY</td><td>POSITIVE</td></tr>
+</table>
+<p>Now, let's plot the outcome of TOTAL_VISITS against the MEAN_ELIX_SCORE, creating a separate intercept for each CBSA.</p>
+
+```{r}
+ggplot(data=PUF_ELIX_IP2009_GT0, aes(x=MEAN_ELIX_SCORE, y=TOTAL_VISITS, 
+                                     group=CBSA)) + 
+  geom_line() + 
+  geom_smooth(method = "glm", method.args=c(family="poisson"), se=FALSE)
+```
+
+```{r}
+#
+# Poisson against the outcome of TOTAL_LOS (Total Length of Stay) for each CBSA
+
+ggplot(data=PUF_ELIX_IP2009_GT0, aes(x=MEAN_ELIX_SCORE, y=TOTAL_LOS, 
+                                     group=CBSA)) + 
+  geom_line() + 
+  geom_smooth(method = "glm", method.args=c(family="poisson"), se=FALSE)
+```
+<p>
+Now, let's try fitting some models with the <b>random effect of CBSA</b> (noting that there are several beneficiaries whose counties are too small to belong to a CBSA)
+<br/>
+</p>
+
+```{r}
+zero_cbsas <- PUF_ELIX_IP2009 %>% subset(CBSA=="0")
+zero_fips <- PUF_ELIX_IP2009 %>% subset(FULL_FIPS_CODE=="0")
+```
+<p>
+25,943 beneficiaries without CBSAs.<br/>
+1,755 beneficiaries without FIPS.<br/>
+</p>
+
+```{r}
+PUF_ELIX_IP2009_GT0 <- PUF_ELIX_IP2009_GT0 %>%
+  mutate(MC_SCALED = scale(MEAN_CHRONIC))
+
+PUF_ELIX_IP2009_GT0 <- PUF_ELIX_IP2009_GT0 %>%
+  mutate(TC_SCALED = scale(TOTAL_CODES))
+
+PUF_ELIX_IP2009_GT0 <- PUF_ELIX_IP2009_GT0 %>%
+  mutate(LOS_SCALED = scale(TOTAL_LOS))
+
+PUF_ELIX_IP2009_GT0 <- PUF_ELIX_IP2009_GT0 %>%
+  mutate(PHYS_SCALED = scale(TOTAL_PHYS))
+
+PUF_ELIX_IP2009_GT0 <- PUF_ELIX_IP2009_GT0 %>%
+  mutate(ELIX_SCALED = scale(MEAN_ELIX_SCORE))
+
+CBSA_GT0 <- subset(PUF_ELIX_IP2009_GT0, CBSA!="0")
+```
+
+<p>
+Modeling 13,080 Beneficiaries with 1 or more inpatient visits in 2009 who live in a CBSA:<br/>
+</p>
+
+```{r}
+# Linear Random Effects Model ~ RE Slope: Elixhauser Score, RE Intercept: CBSA
+lmm = lmer(TOTAL_VISITS ~ MC_SCALED + LOS_SCALED + ELIX_SCALED + B_DIED + (ELIX_SCALED|CBSA), data = CBSA_GT0) 
+summary(lmm)
+```
+
+```{r}
+plot(lmm)
+```
+
+```{r}
+# GLM Random Effects Model, Gamma ~ RE Intercept: CBSA
+glmm = glmer(TOTAL_VISITS ~ MC_SCALED + LOS_SCALED + ELIX_SCALED + B_DIED + (1|CBSA), data = CBSA_GT0, family = Gamma(link = "log")) 
+summary(glmm)
+```
+
+```{r}
+plot(glmm)
+```
+```{r}
+anova(lmm, glmm)
+```
+
+<b>In this case, the Gamma mixed model has the best fit, with AIC 9713.2 and -log-likelihood -4849.6</b><br/>
+Both models have the same number of parameters.<br/>
+<br/>
+
+```{r}
+CBSA_GT0 <- CBSA_GT0 %>%
+  mutate(SCALED_COSTS = scale(ALLCOSTS))
+
+# Random Effects Model ~ RE Slope: TOTAL_PHYS (Number of Physicians), RE Intercept: CBSA
+lmm2 = lmer(TOTAL_LOS ~ MEAN_CHRONIC + TOTAL_CODES + TOTAL_PHYS + MEAN_ELIX_SCORE + SCALED_COSTS + (TOTAL_PHYS|CBSA), data = CBSA_GT0) 
+summary(lmm2)
+
+```
+
+```{r}
+plot(lmm2)
+```
+<p>
+CBSA plus the slope of number of physicians explains the majority of the variance.<br/>
+The remaining variance is small, but is well-explained by the covariates.<br/>
+The residuals are fairly equally distributed around the zero line.<br/>
+Let's scale variables, and compare it with a glmer.<br/>
+</p>
+
+```{r}
+
+# GLM Random Effects Model ~ RE Slope: PHYS_SCALED (Number of Physicians), RE Intercept: CBSA
+glmm2 = glmer.nb(TOTAL_LOS ~ MC_SCALED + TC_SCALED + PHYS_SCALED + ELIX_SCALED + SCALED_COSTS + (PHYS_SCALED|CBSA), data = CBSA_GT0) 
+summary(glmm2)
+
+```
+
+```{r}
+plot(glmm2)
+```
+
+ANOVA Comparison:<br/>
+<br/>
+
+```{r}
+anova(lmm2, glmm2)
+```
+<p>
+<b>The glmer NB model has the superior fit, but this model doesn't fit nearly as well as the visits model.</b><br/>
+</p>
+
+```{r}
+
+# LA COUNTY 06 037
+county_subset <- CBSA_GT0 %>%
+    mutate(predictions = predict(glmm)) %>%
+      filter(FULL_FIPS_CODE=="6037") 
+
+```
+<b>Exploring LA County's 320 Beneficiaries, using the TOTAL_VISITS Gamma model</b>
+<br/>
+
+```{r}
+ggplot(county_subset, aes(x = predictions, y = TOTAL_VISITS)) + 
+  geom_point() + 
+  xlab("Predicted TOTAL VISITS (glmer Gamma)") + 
+  ylab("Total Visits") + 
+  theme_classic()
+```
+
+```{r}
+ggplot(county_subset, aes(x =predictions, y = (TOTAL_VISITS-predictions))) + 
+  geom_point() + 
+  xlab("Predicted Total Visits (glmer Gamma)") + 
+  ylab("Residuals") + 
+  theme_classic()
+```
+<p>
+The best-fitting model still under-predicts in general<br/>
+</p>
+```{r}
+ggplot(county_subset, aes(x = MC_SCALED, y = TOTAL_VISITS)) + 
+  geom_point() + 
+    stat_smooth(method = "lm", aes(color="linear"), se=FALSE) +
+    stat_smooth(method = "glm", aes(color="gamma"), method.args=list(family = Gamma(link = "log")), se=FALSE) +
+    stat_smooth(method = "glm.nb", aes(color="negative binomial"), se=FALSE) +
+  xlab("Mean Chronic Conditions (Scaled)") + 
+  ylab("Number of Visits") + 
+  theme_classic()
+```
+```{r}
+ggplot(county_subset, aes(x = ELIX_SCALED, y = TOTAL_VISITS)) + 
+  geom_point() + 
+    stat_smooth(method = "lm", aes(color="linear"), se=FALSE) +
+    stat_smooth(method = "glm", aes(color="gamma"), method.args=list(family = Gamma(link = "log")), se=FALSE) +
+    stat_smooth(method = "glm.nb", aes(color="negative binomial"), se=FALSE) +
+  xlab("Avg Elix Score (Scaled)") + 
+  ylab("Total Visits") + 
+  theme_classic()
+```
+
+```{r}
+ggplot(county_subset, aes(x = LOS_SCALED, y = TOTAL_VISITS)) + 
+  geom_point() + 
+    stat_smooth(method = "lm", aes(color="linear"), se=FALSE) +
+    stat_smooth(method = "glm", aes(color="gamma"), method.args=list(family = Gamma(link = "log")), se=FALSE) +
+    stat_smooth(method = "glm.nb", aes(color="negative binomial"), se=FALSE) +
+  xlab("Length of Stay (Scaled)") + 
+  ylab("Total Visits") + 
+  theme_classic()
+```
+

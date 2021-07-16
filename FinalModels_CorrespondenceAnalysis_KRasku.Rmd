@@ -1,0 +1,362 @@
+---
+title: 'R Notebook: Correspondence Analysis - Inpatient Medicare Beneficiaries 2009'
+author: "Kyle P. Rasku RN BSN"
+date: "07-16-2021"
+---
+<p>
+Let's use this 2009 Medicare Inpatient data to look at the relationship between utilization, demographic attributes and cardiac-related chronic conditions.
+</p>
+
+```{r}
+library("FactoMineR")
+library("factoextra")
+library(tidyverse)
+
+medicare <- read.csv("PUF_ELIX_IP2009.csv")
+medicare <- medicare %>%
+  mutate(SUPERUSER = TOTAL_VISITS>3|TOTAL_LOS>6)
+medicare <- medicare %>%
+  mutate(SUPERUSER_FACTOR = factor(SUPERUSER))
+medicare <- medicare %>%
+  mutate(TOTCHRONIC_FACTOR = factor(TOTCHRONIC))
+su <- subset(medicare, SUPERUSER==TRUE)
+
+medicare.active <- medicare %>% dplyr::select(AGE_GROUP, B_SEX, B_DIVERSE, B_DIED, B_CHF, B_ISCHMCHT, B_CHRNKIDN, B_STRKETIA, B_ESRD, SUPERUSER)
+medicare.active
+```
+
+Active Rows for MCA are set. <br/>
+Provide data summary of active rows: <br/>
+<br/>
+```{r}
+summary(medicare.active)
+```
+
+This data set has 112,182 rows and all variables are categorical.<br/>
+Plot some frequencies:<br/>
+<br/>
+
+```{r}
+library(ggplot2)
+ggplot(medicare.active, aes(x = AGE_GROUP)) + geom_bar() + labs(title = "Age of 2009 Medicare Beneficiaries")
+ggplot(medicare.active, aes(x = B_DIVERSE)) + geom_bar() + labs(title = "Race of 2009 Medicare Beneficiaries")
+ggplot(medicare.active, aes(x = B_ISCHMCHT)) + geom_bar() + labs(title = "Ischemic Heart Disease: 2009 Medicare Beneficiaries")
+ggplot(medicare.active, aes(x = SUPERUSER)) + geom_bar() + labs(title = "Super-Utilization of 2009 Medicare Beneficiaries")
+```
+
+Looking more closely at the younger beneficiaries (<65):<br/>
+
+```{r}
+under65 <- subset(medicare, AGE_GROUP=="19-44"|AGE_GROUP=="45-64")
+
+nrow(under65)
+```
+```{r}
+under45 <- subset(medicare, AGE_GROUP=="19-44")
+nrow(under45)
+```
+
+There are 3,975 beneficiaries under age 45, and 17,142 beneficiaries under age 65 (inclusive).<br/>
+How many are superusers?<br/>
+<b>A Superuser is defined for this project as a beneficiary with more than 3 inpatient visits during the year, or any inpatient visit lasting longer than 6 days.</b><br/>
+<br/>
+
+```{r}
+ggplot(data = under65, aes(x = SUPERUSER, fill = TOTCHRONIC_FACTOR)) +
+    geom_bar() + labs(title = "Medicare Beneficiaries Under 65")
+```
+
+```{r}
+library(sqldf)
+num_died <- sqldf('SELECT count(*) from medicare where B_DIED==1')
+num_died_under65 <- sqldf('SELECT count(*) from under65 where B_DIED==1')
+num_su <- sqldf('SELECT count(*) from medicare where SUPERUSER==TRUE')
+num_su_under65 <- sqldf('SELECT count(*) from under65 where SUPERUSER=TRUE')
+num_su_under45 <- sqldf('SELECT count(*) from under45 where SUPERUSER=TRUE')
+num_ccs_under65 <- sqldf('SELECT sum(TOTCHRONIC) from under65')
+num_ccs_under45 <- sqldf('SELECT sum(TOTCHRONIC) from under45')
+all_ccs <- sqldf('SELECT sum(TOTCHRONIC) from medicare')
+```
+Number of beneficiaries under 65 who died in 2009: 252 (15% of all who died)<br/>
+Number of superusers under 65: 1031 (17% of all superusers)<br/>
+Number of superusers under 45:  220 (.3% of all superusers)<br/>
+Total number of chronic conditions in beneficiaries under 65: 43,036 (15% of all chronic conditions)<br/>
+Total number of chronic conditions in beneficiaries under 45:  9,926 (.3% of all chronic conditions)<br/>
+<p/>
+
+```{r}
+ggplot(data = medicare, aes(x = TOTCHRONIC_FACTOR, fill = SUPERUSER)) +
+  geom_bar() + 
+  labs(title = "Medicare Beneficiaries in 2009") + 
+  xlab("Number of Chronic Conditions")
+```
+Superutilization appears to peak at six chronic conditions.<br/>
+
+```{r}
+# Subset to only those with active visits in 2009 (16,907 beneficiaries)
+cc_sub <- subset(medicare, TOTAL_VISITS>0)
+ggplot(cc_sub, aes(x=SUPERUSER_FACTOR, y=mean(TOTCHRONIC), fill=AGE_GROUP)) + 
+    geom_col() +
+    xlab("Superuser Status") +
+    ylab("Mean Number of Chronic Conditions")
+
+
+```
+<p>
+Proportionally, there are more superusers under 65 (disabled), or of fragile elder health (85+)<br/>
+</p>
+
+Before beginning MCA, ensure all variables are factors:
+
+```{r}
+for(i in 1:ncol(medicare.active)) {       
+  medicare.active[ , i] <- factor(medicare.active[ , i])
+}
+```
+
+```{r}
+# MCA, all active variables.
+# The SUPPLEMENTAL variable is "Superuser"
+ncol(medicare.active)
+res.mca <- MCA(medicare.active, quali.sup=10, method="burt", graph = FALSE)
+res.mca
+```
+Intermediate Results will not be shown, because they are too large.<br/>
+They are contained in the variable res.mca$call<br/>
+<p>
+The proportions of variance retained by the different dimensions, extracted to Eigenvalues:<br/>
+<br/>
+```{r}
+eig.val <- get_eigenvalue(res.mca)
+fviz_screeplot(res.mca, addlabels = TRUE, ylim = c(0, 99))
+```
+<p>
+Using the Burt method, 34.2% of the variance is explained by the 1st Dimension, and 9.4% is explained by the 2nd.<br/>
+Not using the Burt method results in 10 dimensions, all containing very little of the variance, so the Burt method is preferred.<br/>
+The remaining variance is evenly spread between the remaining 8 dimensions.<br/>
+100% of the variance is explained by 10 dimensions.  <br/>
+A visualization of Dimensions 1 and 2 will cover about 43.6% of the variance.<br/>
+A visualization of Dimensions 1 and 3 will cover 42.2%.<br/>
+</p>
+
+```{r}
+fviz_mca_biplot(res.mca, 
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+```
+<p>
+Dim 2 doesn't seem to provide much separation.  Maybe some separation between males (SEX_0) v. females (SEX_1)?<br/>
+Dim 2 also appears to provide some separation in age, between older (bottom) and younger (top)<br/>
+Diversity (not being white), is closer to being younger, and closer to not being a superutilizer.<br/>
+<p>
+Dim 1 appears to be separating the supplemental factor of interest.<br/>
+On the far left, we can see CHF_0 (no CHF) closer to FALSE in terms of superutilization,<br/>
+and CKD, Stroke, CHF, End Stage Renal Disease (ESRD) (1) closer to TRUE.<br/>
+Our dimensions may not be able to differentiate well between some of the demographic factors of interest.<br/>
+Possibly, this indicates that the demographic factors are not significantly correlated with specific diseases.<br/>
+Heart disease is correlated with maleness, but only in the younger population, and these are predominantly people over 65.<br/>
+</p>
+
+```{r}
+# Now let's look at Dimensions 1 and 3
+fviz_mca_biplot(res.mca, 
+                axes = c(1,3),
+               repel = TRUE, # Avoid text overlapping (slow if many point)
+               ggtheme = theme_minimal())
+```
+
+<p>Here there is some separation between those who died and those who did not.<br/>
+Also some separation between males and females (again).<br/>
+</p>
+
+
+```{r}
+elderly_died <- subset(medicare, BENE_AGE>64&B_DIED==1)
+ggplot(data = elderly_died, aes(x = B_SEX, fill = TOTCHRONIC_FACTOR)) +
+    geom_bar() + labs(title = "Elderly (65+) who Died (1432 persons): By Sex and # of Chronic Conditions")
+```
+A substantial # of these people had no chronic conditions.<br/>
+Did they *really* not have chronic conditions or did they just die before they were diagnosed?<br/>
+<p>
+```{r}
+ischd <- subset(medicare, B_ISCHMCHT==1&B_DIED==1)
+ggplot(data = ischd, aes(x = B_SEX, fill = AGE_GROUP)) +
+    geom_bar() + labs(title = "Deaths of People with Ischemic Heart Disease")
+```
+
+```{r}
+died_85 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE B_DIED==1 and AGE_GROUP=="85+"')
+died_75 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE B_DIED==1 and AGE_GROUP=="75-84"')
+died_65 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE B_DIED==1 and AGE_GROUP=="65-74"')
+died_45 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE B_DIED==1 and AGE_GROUP=="45-64"')
+died_19 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE B_DIED==1 and AGE_GROUP=="19-44"')
+
+su_85 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE SUPERUSER==TRUE and AGE_GROUP=="85+"')
+su_75 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE SUPERUSER==TRUE and AGE_GROUP=="75-84"')
+su_65 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE SUPERUSER==TRUE and AGE_GROUP=="65-74"')
+su_45 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE SUPERUSER==TRUE and AGE_GROUP=="45-64"')
+su_19 <- sqldf('SELECT count(*), sum(B_CHF), sum(B_ISCHMCHT), sum(B_CHRNKIDN), sum(B_STRKETIA), sum(B_ESRD) from medicare WHERE SUPERUSER==TRUE and AGE_GROUP=="19-44"')
+```
+<p><b>Deaths & Superutilization by Chronic Cardiac-Related Conditions</b><br/>
+NOTE: These conditions are in no way mutually exclusive.  Most people with ESRD have CKD, and most people with CHF have ischemic heart disease.<br/>
+</p>
+<p>
+Of those who died at 85+ (308), 171 had ischemic heart disease, 125 had CHF, 80 had CKD, 42 had ESRD and 21 had Stroke/TIA.<br/>
+Of those who died at 75-84 (501), 247 had ischemic heart disease, 193 had CHF, 106 had CKD, 50 had ESRD and 29 had Stroke/TIA.<br/>
+Of those who died at 65-74 (623), 281 had ischemic heart disease, 195 had CHF, 135 had CKD, 51 had ESRD and 29 had Stroke/TIA.<br/>
+Of those who died at 45-64 (190), 90 had ischemic heart disease, 64 had CHF, 42 had CKD, 20 had ESRD and 8 had Stroke/TIA.<br/>
+Of those who died at 19-44 (62), 31 had ischemic heart disease, 26 had CHF, 16 had CKD, 5 had ESRD and 1 had Stroke/TIA.<br/>
+</p>
+<p>
+Of those who were superutilizers age 85+ (1203), 1080 had ischemic heart disease, 938 had CHF, 822 had CKD, 372 had ESRD and 231 had Stroke/TIA.<br/>
+Of those who were superutilizers age 75-84 (1836), 1605 had ischemic heart disease, 1414 had CHF, 1243 had CKD, 521 had ESRD and 324 had Stroke/TIA.<br/>
+Of those who were superutilizers age 65-74 (1880), 1618 had ischemic heart disease, 1372 had CHF, 1200 had CKD, 489 had ESRD and 290 had Stroke/TIA.<br/>
+Of those who were superutilizers age 45-64 (811), 691 had ischemic heart disease, 623 had CHF, 542 had CKD, 221 had ESRD and 158 had Stroke/TIA.<br/>
+Of those who were superutilizers age 19-44 (220), 186 had ischemic heart disease, 164 had CHF, 143 had CKD, 70 had ESRD and 41 had Stroke/TIA.<br/>
+</p>
+
+```{r}
+# Looking at the coordinates, cos2 and contribution of variable categories
+var <- get_mca_var(res.mca)
+var
+```
+
+<p>The correlation between variables and principal dimensions:</p>
+
+```{r}
+fviz_mca_var(res.mca, choice = "mca.cor", 
+            repel = TRUE, # Avoid text overlapping (slow)
+            ggtheme = theme_minimal())
+```
+<p>
+Chronic conditions contribute strongly to Dim1 but not Dim2.
+Sex, diversity and age contribute to Dim2.  Being dead or alive appears to not be differentiated by these dimensions.
+</p>
+```{r}
+# Category / Value Coordinates
+round(var$coord, 2)
+```
+ <p>
+Dim 1: Heart Disease, CKD, Stroke, ESRD, and CHF.<br/>
+Dim 2: Some of the age groups, a small amount of sex (mostly female), and diversity are represented in this dimension.<br/>
+Dim 3: Some more of the age differences, also a decent-sized proportion of who died (although there appears to be more of this in later dims).<br/>
+ </p>
+```{r}
+# Visualizing Category / Value Coordinates
+fviz_mca_var(res.mca, 
+             repel = TRUE, # Avoid text overlapping (slow)
+             ggtheme = theme_minimal())
+```
+ <p>
+Variable categories with a similar profile are grouped together. (Example: Ischemic HD and CHF, CKD and ESRD)<br/>
+Negatively correlated variable categories are positioned on opposite sides of the plot origin (opposed quadrants). (85+ vs. Diverse)<br/>
+The distance between category points and the origin measures the **quality** of the variable category on the factor map. <br/>
+Category points that are away from the origin are *well represented* on the factor map.<br/>
+Those who died, also those WITHOUT chronic conditions are undifferentiated. The relationship between chronic conditions and utilization is well-represented. Also, the relationship between the age and diversity of beneficiaries. (Those who are not white are less likely to be/get old (85+).<br/>
+</p>
+<br/>
+Degrees of association between variable categories and axes:<br/>
+<br/>
+```{r}
+head(var$cos2, 20)
+```
+<p>
+Dim 1 is representing the chronic conditions.<br/>
+Dim 2 is representing age groups, some diversity.<br/>
+Dim 5 appears to have most of the variation in deaths.<br/>
+</p>
+```{r}
+# Color by cos2 values: quality on the factor map
+fviz_mca_var(res.mca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE, # Avoid text overlapping
+             ggtheme = theme_minimal())
+```
+The lower quality of the information about who died is shown here.<br/>
+The best quality information in this analysis is about the chronic conditions and their relationship to superutilization.
+<br/>
+```{r}
+library("corrplot")
+corrplot(var$cos2, is.corr=FALSE)
+```
+Another view of this with corrplot library.<br/>
+If we want to get a good look at death v. survival that's in Dim 4.  Most of the age differentiation is in Dim3-Dim5.<br/>
+Luckily, there is *some* in Dim2, along with sex variation.
+<br/>
+```{r}
+# Cos2 of variable categories on Dim.1 and Dim.2
+fviz_cos2(res.mca, choice = "var", axes = 1:2)
+```
+
+```{r}
+# Contributions of Variable Categories to the Dimensions
+head(round(var$contrib,2), 20)
+```
+The variables that contribute MOST to Dims 1 and 2 explain most of the variation in the data set (54%) - all the chronic conditions, 19-44 and 45-64 year olds, people of color (B_DIVERSE==1).<br/>
+<br/>
+```{r}
+# Contributions of rows to dimension 1
+fviz_contrib(res.mca, choice = "var", axes = 1, top = 15)
+# Contributions of rows to dimension 2
+fviz_contrib(res.mca, choice = "var", axes = 2, top = 15)
+# Contributions of rows to dimension 3
+fviz_contrib(res.mca, choice = "var", axes = 3, top = 15)
+# Contributions of rows to dimension 4
+fviz_contrib(res.mca, choice = "var", axes = 4, top = 15)
+```
+The red dashed line on the graphs above indicates the *expected average value*, if the contributions were uniform.<br/>
+<br/>
+```{r}
+fviz_mca_var(res.mca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE, # avoid text overlapping (slow)
+             ggtheme = theme_minimal()
+             )
+```
+
+Graphing Individuals<br/>
+<br/>
+```{r}
+ind <- get_mca_ind(res.mca)
+ind
+```
+Quality and Contribution of Individuals<br/>
+<br/>
+```{r}
+fviz_mca_ind(res.mca, col.ind = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE, # Avoid text overlapping (slow if many points)
+             ggtheme = theme_minimal())
+```
+
+```{r}
+# Apply SUPERUSER as Grouping Variable
+fviz_mca_ind(res.mca, 
+             label = "none", # hide individual labels
+             habillage = "SUPERUSER", # color by groups 
+             palette = c("#00AFBB", "#E7B800"),
+             addEllipses = TRUE, ellipse.type = "confidence",
+             ggtheme = theme_minimal()) 
+```
+
+Note how most of the superusers are out at the right-end of the x-axis, where the chronic condition indicators clustered.<br/>
+<p>
+```{r}
+fviz_ellipses(res.mca, c("SUPERUSER", "B_ISCHMCHT"),
+              geom = "point")
+```
+```{r}
+fviz_ellipses(res.mca, c("SUPERUSER", "AGE_GROUP"),
+              geom = "point")
+```
+Superusers tend toward the lower right, as do older people (75+).<br/>
+<p>
+```{r}
+# top 500 contributing individuals and top 5 variable categories
+fviz_mca_biplot(res.mca, select.ind = list(contrib = 500), 
+               select.var = list(contrib = 5),
+               ggtheme = theme_minimal())
+```
+<p><b>
+All in all, the MCA concludes clearly that chronic conditions are associated with high rates of utilization (many inpatient stays), and lengths of stay.  Age plays a role, but other demographic characteristics are less associated with these outcomes.  We did not explore the role of physicians in utilization in this analysis, but this is a complex effect that is explored in the Factor Analysis. 
+</b></p>
